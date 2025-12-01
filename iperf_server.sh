@@ -1,28 +1,32 @@
 #!/usr/bin/env bash
 #
-# 启动多个 iperf3 服务端，每个绑定不同端口与独立 CPU 核
+# 启动多个 iperf3 服务端，每个绑定不同端口与独立 CPU 核，可选绑定指定本地 IP。
 #
 # 用法:
-#   ./iperf_server.sh -n <实例数量> [-b <基准端口>] [-d]
+#   ./iperf_server.sh -n <实例数量> [-b <基准端口>] [-B <bind_ip>] [-d] [--skip-ip-check]
 #
 # 参数说明:
-#   -n    启动的 iperf3 服务端数量（必须）
-#   -b    基准端口，默认 5201；第 i 个实例使用端口 (base_port + i)
-#   -d    后台运行（脚本不保持前台等待，直接退出）
+#   -n                启动的 iperf3 服务端数量（必须）
+#   -b                基准端口，默认 5201；第 i 个实例使用端口 (base_port + i)
+#   -B <bind_ip>      绑定本地源 IP（执行 iperf3 -B）。若不指定则使用系统默认选路。
+#   -d                后台模式：脚本启动完毕即退出，不阻塞前台
+#   --skip-ip-check   跳过对 -B 指定 IP 是否存在于本机的校验
 #
 # 示例:
 #   ./iperf_server.sh -n 4
-#   ./iperf_server.sh -n 8 -b 6000
+#   ./iperf_server.sh -n 8 -b 6000 -B 192.168.10.5
 #
 set -euo pipefail
 
 BASE_PORT=5201
 COUNT=
 DETACH=0
+BIND_IP=
+SKIP_CHECK=0
 PIDS=()
 
 usage() {
-  sed -n '2,40p' "$0"
+  sed -n '2,60p' "$0"
   exit 1
 }
 
@@ -43,10 +47,21 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-while getopts ":n:b:d" opt; do
+# 手动处理 --skip-ip-check（getopts 不支持长选项）
+LONG_OPTS=()
+for arg in "$@"; do
+  case "$arg" in
+    --skip-ip-check) SKIP_CHECK=1 ;;
+    *) LONG_OPTS+=("$arg") ;;
+  esac
+done
+set -- "${LONG_OPTS[@]}"
+
+while getopts ":n:b:B:d" opt; do
   case $opt in
     n) COUNT=$OPTARG ;;
     b) BASE_PORT=$OPTARG ;;
+    B) BIND_IP=$OPTARG ;;
     d) DETACH=1 ;;
     *) usage ;;
   esac
@@ -73,20 +88,30 @@ if (( COUNT > CORES )); then
   exit 4
 fi
 
+if [[ -n "$BIND_IP" && $SKIP_CHECK -eq 0 ]]; then
+  if ! ip addr show | grep -Eo 'inet ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)' | awk '{print $2}' | grep -Fx "$BIND_IP" >/dev/null; then
+    log "错误: 指定的绑定 IP $BIND_IP 不存在于本机接口。可使用 --skip-ip-check 跳过。"
+    exit 5
+  fi
+fi
+
 log "启动 $COUNT 个 iperf3 服务端，从端口 $BASE_PORT 开始，绑定前 $COUNT 个 CPU 核。"
+[[ -n "$BIND_IP" ]] && log "使用绑定 IP: $BIND_IP" || log "未指定绑定 IP，使用系统默认。"
 
 for (( i=0; i<COUNT; i++ )); do
   PORT=$((BASE_PORT + i))
   CORE=$i
   LOG_FILE="iperf_server_${PORT}.log"
-  # 使用 taskset 绑定 CPU 核
-  ( taskset -c "$CORE" iperf3 -s -p "$PORT" >/dev/null 2>"$LOG_FILE" & echo $! ) &
+  CMD=(iperf3 -s -p "$PORT")
+  [[ -n "$BIND_IP" ]] && CMD+=(-B "$BIND_IP")
+  # 将 stdout 丢弃，stderr 保存（iperf3 的连接信息在 stderr）
+  ( taskset -c "$CORE" "${CMD[@]}" >/dev/null 2>"$LOG_FILE" & echo $! ) &
   PID=$!
   PIDS+=("$PID")
-  printf "%-8s %-6s %-6s %s\n" "实例$i" "端口:$PORT" "CPU:$CORE" "PID:$PID"
+  printf "%-8s %-8s %-8s %-6s %s\n" "实例$i" "端口:$PORT" "CPU:$CORE" "PID:$PID" "日志:$LOG_FILE"
 done
 
-log "所有实例已启动。日志文件格式: iperf_server_<端口>.log"
+log "所有实例已启动。日志文件: iperf_server_<端口>.log"
 
 if (( DETACH == 1 )); then
   log "后台模式：脚本退出但进程继续运行。"
@@ -94,6 +119,5 @@ if (( DETACH == 1 )); then
   exit 0
 else
   log "按 Ctrl+C 结束并清理所有实例。"
-  # 保持前台等待
   wait
 fi
