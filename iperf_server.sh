@@ -98,10 +98,15 @@ fi
 log "启动 $COUNT 个 iperf3 服务端，从端口 $BASE_PORT 开始，绑定前 $COUNT 个 CPU 核。"
 [[ -n "$BIND_IP" ]] && log "使用绑定 IP: $BIND_IP" || log "未指定绑定 IP，使用系统默认。"
 
+# 新增：根据实例数量创建日志目录，如 logs/cores_4
+LOG_DIR="logs/cores_${COUNT}"
+mkdir -p "$LOG_DIR"
+log "日志目录: $LOG_DIR"
+
 for (( i=0; i<COUNT; i++ )); do
   PORT=$((BASE_PORT + i))
   CORE=$i
-  LOG_FILE="iperf_server_${PORT}.log"
+  LOG_FILE="$LOG_DIR/iperf_server_${PORT}.log"
   CMD=(iperf3 -s -p "$PORT")
   [[ -n "$BIND_IP" ]] && CMD+=(-B "$BIND_IP")
   # 将 stdout 丢弃，stderr 保存（iperf3 的连接信息在 stderr）
@@ -111,7 +116,7 @@ for (( i=0; i<COUNT; i++ )); do
   printf "%-8s %-8s %-8s %-6s %s\n" "实例$i" "端口:$PORT" "CPU:$CORE" "PID:$PID" "日志:$LOG_FILE"
 done
 
-log "所有实例已启动。日志文件: iperf_server_<端口>.log"
+log "所有实例已启动。日志文件: $LOG_DIR/iperf_server_<端口>.log"
 
 if (( DETACH == 1 )); then
   log "后台模式：脚本退出但进程继续运行。"

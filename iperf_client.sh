@@ -124,10 +124,15 @@ EXTRA_OPTS+=("-i" "$INTERVAL")
 log "启动 $COUNT 个 iperf3 客户端，目标服务器: $SERVER_HOST，端口从 $BASE_PORT 开始，持续 $DURATION 秒。"
 [[ -n "$BIND_IP" ]] && log "使用本地绑定 IP: $BIND_IP" || log "未指定本地绑定 IP，使用默认出接口。"
 
+# 新增：根据实例数量创建日志目录，如 logs/cores_4
+LOG_DIR="logs/cores_${COUNT}"
+mkdir -p "$LOG_DIR"
+log "日志目录: $LOG_DIR"
+
 for (( i=0; i<COUNT; i++ )); do
   PORT=$((BASE_PORT + i))
   CORE=$i
-  LOG_FILE="iperf_client_${PORT}.log"
+  LOG_FILE="$LOG_DIR/iperf_client_${PORT}.log"
   CMD=(iperf3 -c "$SERVER_HOST" -p "$PORT" -t "$DURATION" "${EXTRA_OPTS[@]}")
   ( taskset -c "$CORE" "${CMD[@]}" >"$LOG_FILE" 2>&1 & echo $! ) &
   PID=$!
@@ -137,4 +142,4 @@ done
 
 log "所有客户端已启动，等待测试完成或按 Ctrl+C 停止。"
 wait
-log "测试结束，查看日志文件: iperf_client_<端口>.log"
+log "测试结束，查看日志文件: $LOG_DIR/iperf_client_<端口>.log"
